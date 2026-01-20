@@ -1,0 +1,7 @@
+{
+  "name": "AI Knowledge Studio",
+  "description": "A notebook-style studio for grounded AI research, featuring audio overviews and live conversational sessions.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
