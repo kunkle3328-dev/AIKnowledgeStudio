@@ -47,6 +47,26 @@ const App: React.FC = () => {
     ));
   };
 
+  const handleUpdateSummary = (notebookId: string, summary: string) => {
+    setNotebooks(prev => prev.map(n => 
+      n.id === notebookId ? { ...n, summary, isGeneratingSummary: false } : n
+    ));
+  };
+
+  const handleSetGeneratingSummary = (notebookId: string, isGenerating: boolean) => {
+    setNotebooks(prev => prev.map(n => 
+      n.id === notebookId ? { ...n, isGeneratingSummary: isGenerating } : n
+    ));
+  };
+
+  const handleDeleteMedia = (notebookId: string, mediaId: string) => {
+    setNotebooks(prev => prev.map(n => 
+      n.id === notebookId 
+        ? { ...n, generatedMedia: n.generatedMedia?.filter(m => m.id !== mediaId) }
+        : n
+    ));
+  };
+
   const renderContent = () => {
     if (appState === AppState.LIST) {
       return (
@@ -62,7 +82,13 @@ const App: React.FC = () => {
     if (!activeNotebook) return null;
 
     if (activeTab === Tab.STUDIO) {
-      return <AudioStudio notebook={activeNotebook} />;
+      return (
+        <AudioStudio 
+          notebook={activeNotebook} 
+          onDeleteMedia={(mediaId) => handleDeleteMedia(activeNotebook.id, mediaId)} 
+          onBack={handleBack}
+        />
+      );
     }
 
     return (
@@ -72,6 +98,8 @@ const App: React.FC = () => {
         activeTab={activeTab as Tab}
         setActiveTab={setActiveTab as any}
         onAddSource={(source) => handleAddSource(activeNotebook.id, source)}
+        onUpdateSummary={handleUpdateSummary}
+        onSetGeneratingSummary={handleSetGeneratingSummary}
       />
     );
   };
@@ -84,27 +112,27 @@ const App: React.FC = () => {
 
       {activeNotebook && (
         <nav className="fixed bottom-0 left-0 right-0 bg-black/95 backdrop-blur-2xl border-t border-white/5 pb-safe z-50">
-          <div className="flex items-center justify-around h-16 px-4">
+          <div className="flex items-center justify-around h-14 px-4">
             <button 
               onClick={() => setActiveTab(Tab.SOURCES)}
               className={`flex flex-col items-center justify-center transition-all px-4 ${activeTab === Tab.SOURCES ? 'text-white' : 'text-zinc-500'}`}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
-              <span className="text-[9px] font-bold mt-1 uppercase tracking-widest">Sources</span>
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+              <span className="text-[8px] font-bold mt-1 uppercase tracking-widest">Sources</span>
             </button>
             <button 
               onClick={() => setActiveTab(Tab.CHAT)}
               className={`flex flex-col items-center justify-center transition-all px-4 ${activeTab === Tab.CHAT ? 'text-white' : 'text-zinc-500'}`}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-              <span className="text-[9px] font-bold mt-1 uppercase tracking-widest">Chat</span>
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              <span className="text-[8px] font-bold mt-1 uppercase tracking-widest">Chat</span>
             </button>
             <button 
               onClick={() => setActiveTab(Tab.STUDIO)}
               className={`flex flex-col items-center justify-center transition-all px-4 ${activeTab === Tab.STUDIO ? 'text-white' : 'text-zinc-500'}`}
             >
-              <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20"/><path d="M2 12h20"/><path d="m4.93 4.93 14.14 14.14"/><path d="m4.93 19.07 14.14-14.14"/></svg>
-              <span className="text-[9px] font-bold mt-1 uppercase tracking-widest">Studio</span>
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20"/><path d="M2 12h20"/><path d="m4.93 4.93 14.14 14.14"/><path d="m4.93 19.07 14.14-14.14"/></svg>
+              <span className="text-[8px] font-bold mt-1 uppercase tracking-widest">Studio</span>
             </button>
           </div>
         </nav>

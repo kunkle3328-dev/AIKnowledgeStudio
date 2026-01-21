@@ -15,6 +15,8 @@ export const MOCK_NOTEBOOKS: Notebook[] = [
     id: '1',
     title: 'One UI 8.5 DeX AI Overhaul',
     emoji: '📱',
+    icon: 'smartphone',
+    category: 'mobile',
     createdAt: 1768867200000, // Jan 20, 2026
     sources: [
       { id: 's1', type: 'text', title: 'Feature List', content: 'Samsung is planning a major overhaul for DeX in One UI 8.5. Key features include AI-driven window management, real-time multitasking summaries, and improved integration with Galaxy AI tools. The redesign aims to make desktop mode more fluid on tablets.' },
@@ -22,22 +24,38 @@ export const MOCK_NOTEBOOKS: Notebook[] = [
     ],
     summary: 'One UI 8.5 introduces a transformative DeX experience centered on **AI productivity**. The update focuses on intelligent workspace automation, **Galaxy AI** deep integration, and cross-device fluidity. Users can expect advanced windowing logic that anticipates task requirements.',
     keywords: ['DeX', 'One UI 8.5', 'Galaxy AI', 'Multitasking'],
-    color: COLORS[0]
+    color: '#38BDF8',
+    generatedMedia: [
+      {
+        id: 'gm1',
+        type: 'AUDIO',
+        title: 'One UI 8.5 DeX AI Overhaul',
+        duration: '36:30',
+        sourceCount: 10,
+        createdAt: Date.now() - 15 * 24 * 60 * 60 * 1000
+      }
+    ]
   },
   {
     id: '2',
     title: 'Quantum Physics Intro',
     emoji: '⚛️',
+    icon: 'atom',
+    category: 'science',
     createdAt: 1768780800000, // Jan 19, 2026
     sources: [],
-    color: COLORS[1]
+    color: '#D8B4FE',
+    generatedMedia: []
   },
   {
     id: '3',
     title: 'Market Research Q3',
     emoji: '📈',
+    icon: 'chart',
+    category: 'business',
     createdAt: 1768694400000, // Jan 18, 2026
     sources: [],
-    color: COLORS[2]
+    color: '#6EE7B7',
+    generatedMedia: []
   }
 ];

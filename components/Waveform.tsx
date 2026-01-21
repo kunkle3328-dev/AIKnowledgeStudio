@@ -3,7 +3,7 @@ import React, { useRef, useEffect } from 'react';
 
 interface WaveformProps {
   isActive: boolean;
-  intensity?: number;
+  intensity?: number; // 0.1 to 1.0
 }
 
 const Waveform: React.FC<WaveformProps> = ({ isActive, intensity = 0.5 }) => {
@@ -18,32 +18,37 @@ const Waveform: React.FC<WaveformProps> = ({ isActive, intensity = 0.5 }) => {
     let animationFrameId: number;
     let offset = 0;
 
-    const drawSplineWave = (color: string, speed: number, amplitude: number, phase: number, width: number, height: number) => {
+    const drawSpiral = (
+      color: string, 
+      speed: number, 
+      amplitude: number, 
+      phase: number, 
+      frequency: number,
+      width: number, 
+      height: number
+    ) => {
       const centerY = height / 2;
       ctx.beginPath();
       ctx.strokeStyle = color;
-      ctx.lineWidth = 3;
+      ctx.lineWidth = 2.5;
       ctx.lineCap = 'round';
-      ctx.shadowBlur = 15;
+      
+      ctx.shadowBlur = isActive ? 15 : 5;
       ctx.shadowColor = color;
 
-      const points = 12;
+      const points = 60; 
       const step = width / (points - 1);
 
       for (let i = 0; i < points; i++) {
         const x = i * step;
         const relativeX = i / (points - 1);
-        const sine = Math.sin(relativeX * Math.PI * 2 + offset * speed + phase);
-        const y = centerY + (sine * amplitude * (isActive ? 1 : 0.05) * intensity);
+        const wave = Math.sin(relativeX * Math.PI * frequency + offset * speed + phase);
+        const envelope = Math.sin(relativeX * Math.PI);
+        const dynamicAmplitude = isActive ? amplitude * intensity : 4; 
+        const y = centerY + (wave * dynamicAmplitude * envelope);
 
-        if (i === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          const prevX = (i - 1) * step;
-          const cpX = (prevX + x) / 2;
-          ctx.quadraticCurveTo(prevX, y, cpX, y); // simplified spline feel
-          ctx.lineTo(x, y);
-        }
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
       }
       ctx.stroke();
     };
@@ -52,12 +57,18 @@ const Waveform: React.FC<WaveformProps> = ({ isActive, intensity = 0.5 }) => {
       const { width, height } = canvas;
       ctx.clearRect(0, 0, width, height);
 
-      // Matches screenshot #3 waves
-      drawSplineWave('rgba(79, 124, 255, 0.7)', 0.04, height * 0.35, 0, width, height);
-      drawSplineWave('rgba(34, 197, 94, 0.7)', 0.03, height * 0.3, Math.PI / 2, width, height);
-      drawSplineWave('rgba(139, 92, 246, 0.7)', 0.05, height * 0.4, Math.PI, width, height);
+      // LOCKED: 3-Spiral System
+      drawSpiral('rgba(77, 163, 255, 0.9)', 0.02, height * 0.35, 0, 3, width, height);
+      drawSpiral('rgba(78, 209, 138, 0.7)', 0.015, height * 0.3, Math.PI / 1.5, 2.5, width, height);
+      drawSpiral('rgba(155, 123, 255, 0.6)', 0.025, height * 0.25, Math.PI / 0.75, 4, width, height);
 
-      if (isActive) offset += 1;
+      if (isActive) {
+        offset += (0.8 * intensity);
+      } else {
+        offset += 0.1;
+        ctx.globalAlpha = 0.4;
+      }
+      
       animationFrameId = requestAnimationFrame(render);
     };
 
@@ -65,7 +76,7 @@ const Waveform: React.FC<WaveformProps> = ({ isActive, intensity = 0.5 }) => {
     return () => cancelAnimationFrame(animationFrameId);
   }, [isActive, intensity]);
 
-  return <canvas ref={canvasRef} className="w-full h-full" width={800} height={400} />;
+  return <canvas ref={canvasRef} className="w-full h-full" width={1200} height={300} />;
 };
 
 export default Waveform;

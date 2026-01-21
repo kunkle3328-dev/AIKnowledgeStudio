@@ -1,6 +1,6 @@
 {
-  "name": "AI Knowledge Studio",
-  "description": "A notebook-style studio for grounded AI research, featuring audio overviews and live conversational sessions.",
+  "name": "AXIOM",
+  "description": "Grounded Intelligence Studio. Transform raw sources into cinematic audio overviews and interactive knowledge networks.",
   "requestFramePermissions": [
     "microphone"
   ]

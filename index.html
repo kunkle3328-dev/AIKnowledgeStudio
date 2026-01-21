@@ -4,15 +4,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>AI Knowledge Studio</title>
+  <title>AXIOM</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=Space+Grotesk:wght@300;400;500;600;700&family=Syncopate:wght@400;700&display=swap" rel="stylesheet">
   <style>
     :root {
       --bg-color: #000000;
-      --card-bg: #111214;
+      --card-bg: #0B0D10;
+      --accent-blue: #4DA3FF;
     }
     body {
       font-family: 'Inter', sans-serif;
@@ -22,6 +23,34 @@
       padding: 0;
       overflow: hidden;
       -webkit-tap-highlight-color: transparent;
+    }
+    .font-axiom {
+      font-family: 'Syncopate', sans-serif;
+      text-transform: uppercase;
+      letter-spacing: 0.25em;
+    }
+    .font-tech {
+      font-family: 'Space Grotesk', sans-serif;
+    }
+    .shimmer-text {
+      background: linear-gradient(
+        to right,
+        #ffffff 20%,
+        #4DA3FF 40%,
+        #4DA3FF 60%,
+        #ffffff 80%
+      );
+      background-size: 200% auto;
+      color: #000;
+      background-clip: text;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: shine 3s linear infinite;
+    }
+    @keyframes shine {
+      to {
+        background-position: 200% center;
+      }
     }
     .custom-scrollbar::-webkit-scrollbar {
       width: 0px;
@@ -38,13 +67,13 @@
     .bg-app { background-color: var(--bg-color); }
     .bg-card { background-color: var(--card-bg); }
     
-    @keyframes pulse-white {
-      0% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4); }
-      70% { box-shadow: 0 0 0 10px rgba(255, 255, 255, 0); }
-      100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0); }
+    @keyframes pulse-blue {
+      0% { box-shadow: 0 0 0 0 rgba(77, 163, 255, 0.4); }
+      70% { box-shadow: 0 0 0 15px rgba(77, 163, 255, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(77, 163, 255, 0); }
     }
-    .pulse-btn {
-      animation: pulse-white 2s infinite;
+    .pulse-blue {
+      animation: pulse-blue 3s infinite;
     }
   </style>
 <script type="importmap">
