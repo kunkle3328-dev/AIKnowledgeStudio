@@ -1,8 +1,7 @@
 
 import React, { useState } from 'react';
 import { Notebook, NotebookIcon } from '../types';
-import { iconMap } from '../services/icons';
-import { classifyNotebook } from '../services/classifyNotebook';
+import { createVisualFingerprint } from '../services/classifyNotebook';
 import AxiomLogo from './AxiomLogo';
 
 interface NotebookListProps {
@@ -37,20 +36,17 @@ const NotebookList: React.FC<NotebookListProps> = ({ notebooks, onSelect, onAddN
 
   const handleCreate = () => {
     if (!newTitle.trim()) return;
-    const category = classifyNotebook(newTitle.trim());
-    const spec = iconMap[category];
+    const fingerprint = createVisualFingerprint(newTitle.trim());
 
     onAddNotebook({
       id: Date.now().toString(),
       title: newTitle.trim(),
-      emoji: '📁',
-      icon: spec.icon,
-      category,
       createdAt: Date.now(),
       sources: [],
-      color: spec.accent,
       summary: '',
       isGeneratingSummary: false,
+      visualFingerprint: fingerprint,
+      generatedMedia: []
     });
     setNewTitle(''); setShowAddModal(false);
   };
@@ -80,16 +76,16 @@ const NotebookList: React.FC<NotebookListProps> = ({ notebooks, onSelect, onAddN
 
       <div className="flex-1 overflow-y-auto no-scrollbar px-6 flex flex-col gap-4 pb-48">
         {notebooks.map(notebook => {
-          const spec = iconMap[notebook.category];
+          const fingerprint = notebook.visualFingerprint;
           return (
             <div 
               key={notebook.id} onClick={() => onSelect(notebook)}
-              style={{ background: `linear-gradient(135deg, ${spec.bgColor}99, ${spec.bgColorAlt}66), #0B0D10` }}
-              className="w-full p-5 rounded-[28px] flex items-center justify-between group active:scale-[0.98] transition-all border border-white/5 shadow-[0_8px_20px_rgba(0,0,0,0.4)] shrink-0"
+              style={{ background: `linear-gradient(135deg, ${fingerprint.bgColor}99, ${fingerprint.bgColorAlt}66), #0B0D10` }}
+              className="w-full p-5 rounded-[28px] flex items-center justify-between group active:scale-[0.98] transition-all border border-white/5 shadow-[0_8px_20px_rgba(0,0,0,0.4)] shrink-0 animate-in fade-in slide-in-from-bottom-2 duration-500"
             >
               <div className="flex items-center gap-4 overflow-hidden">
                 <div className="w-12 h-12 bg-black/40 backdrop-blur-md rounded-2xl shrink-0 flex items-center justify-center border border-white/5">
-                  <NotebookIconRenderer icon={spec.icon} color={spec.accent} />
+                  <NotebookIconRenderer icon={fingerprint.icon} color={fingerprint.accent} />
                 </div>
                 <div className="overflow-hidden">
                   <h3 className="text-base font-bold text-white leading-tight truncate font-tech">{notebook.title}</h3>

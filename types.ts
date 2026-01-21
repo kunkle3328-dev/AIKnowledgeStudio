@@ -6,10 +6,20 @@ export interface Source {
   content: string;
 }
 
+export interface TranscriptSegment {
+  id: string;
+  speaker: 'Alex' | 'Jordan';
+  startMs: number;
+  endMs: number;
+  text: string;
+}
+
 export interface AudioChapter {
   id: string;
   title: string;
-  startTime: number; // in seconds
+  startMs: number;
+  endMs: number;
+  summary: string;
 }
 
 export interface GeneratedMedia {
@@ -19,9 +29,48 @@ export interface GeneratedMedia {
   duration?: string;
   sourceCount: number;
   createdAt: number;
+  artworkUrl?: string;
+  transcript?: TranscriptSegment[];
+  chapters?: AudioChapter[];
 }
 
-export type HostPersonality = 'neutral' | 'curious' | 'analytical' | 'warm' | 'debate';
+export type HostPersonality = 'neutral' | 'curious' | 'analytical' | 'warm' | 'debate' | 'visionary';
+
+export type PodcastJobState = 
+  | 'QUEUED' 
+  | 'PREFLIGHT'
+  | 'OUTLINING' 
+  | 'SCRIPTING' 
+  | 'SYNTHESIZING' 
+  | 'FINALIZING' 
+  | 'READY' 
+  | 'FAILED' 
+  | 'QUOTA_PAUSED' 
+  | 'QUOTA_BLOCKED'
+  | 'OPTIMIZING';
+
+export type GenerationMode = 'PRIMARY' | 'OPTIMIZED' | 'FAILSAFE';
+
+export interface PodcastJob {
+  jobId: string;
+  notebookId: string;
+  state: PodcastJobState;
+  progress: number;
+  mode: GenerationMode;
+  audio?: {
+    audio: string;
+    chapters: AudioChapter[];
+    transcript: TranscriptSegment[];
+    artworkUrl?: string;
+  };
+  error?: string;
+  createdAt: number;
+  personality: HostPersonality;
+  completedChunks: number;
+  totalChunks: number;
+  partialAudioBuffers?: string[]; // Base64 chunks for resume
+  partialTranscript?: TranscriptSegment[];
+}
 
 export type NotebookCategory =
   | 'technology'
@@ -55,22 +104,28 @@ export type NotebookIcon =
   | 'book-open'
   | 'flask';
 
+export interface NotebookVisualFingerprint {
+  category: NotebookCategory;
+  icon: NotebookIcon;
+  bgColor: string;
+  bgColorAlt: string;
+  accent: string;
+  assignedAt: number;
+}
+
 export interface Notebook {
   id: string;
   title: string;
-  emoji: string; // Legacy support
-  icon: NotebookIcon;
-  category: NotebookCategory;
   createdAt: number;
   sources: Source[];
   summary?: string;
   keywords?: string[];
   audioOverviewUrl?: string;
-  color: string;
   chapters?: AudioChapter[];
   hostPersonality?: HostPersonality;
   generatedMedia?: GeneratedMedia[];
   isGeneratingSummary?: boolean; 
+  visualFingerprint: NotebookVisualFingerprint;
 }
 
 export enum Tab {

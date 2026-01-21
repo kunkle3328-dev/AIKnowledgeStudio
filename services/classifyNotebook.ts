@@ -1,5 +1,6 @@
 
-import { NotebookCategory } from '../types';
+import { NotebookCategory, NotebookVisualFingerprint } from '../types';
+import { iconMap } from './icons';
 
 const keywordMap: Record<NotebookCategory, string[]> = {
   technology: ['ai', 'software', 'api', 'code', 'developer', 'cloud', 'chip', 'processor'],
@@ -13,17 +14,25 @@ const keywordMap: Record<NotebookCategory, string[]> = {
   general: [],
 };
 
-export function classifyNotebook(
-  title: string,
-  sources: string[] = []
-): NotebookCategory {
-  const text = `${title} ${sources.join(' ')}`.toLowerCase();
+export function createVisualFingerprint(title: string): NotebookVisualFingerprint {
+  const text = title.toLowerCase();
+  let category: NotebookCategory = 'general';
 
-  for (const [category, keywords] of Object.entries(keywordMap)) {
+  for (const [cat, keywords] of Object.entries(keywordMap)) {
     if (keywords.some(k => text.includes(k))) {
-      return category as NotebookCategory;
+      category = cat as NotebookCategory;
+      break;
     }
   }
 
-  return 'general';
+  const spec = iconMap[category];
+
+  return {
+    category,
+    icon: spec.icon,
+    bgColor: spec.bgColor,
+    bgColorAlt: spec.bgColorAlt,
+    accent: spec.accent,
+    assignedAt: Date.now()
+  };
 }
