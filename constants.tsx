@@ -3,12 +3,11 @@ import React from 'react';
 import { Notebook } from './types';
 
 export const COLORS = [
-  'bg-blue-900/40',
-  'bg-purple-900/40',
-  'bg-emerald-900/40',
-  'bg-orange-900/40',
-  'bg-pink-900/40',
-  'bg-indigo-900/40'
+  'bg-[#0D1B3E]', // Deep Navy Blue
+  'bg-[#1A0B2E]', // Deep Purple
+  'bg-[#051F15]', // Deep Forest Green
+  'bg-[#2D1605]', // Deep Bronze
+  'bg-[#2D0516]', // Deep Maroon
 ];
 
 export const MOCK_NOTEBOOKS: Notebook[] = [
@@ -16,7 +15,7 @@ export const MOCK_NOTEBOOKS: Notebook[] = [
     id: '1',
     title: 'One UI 8.5 DeX AI Overhaul',
     emoji: '📱',
-    createdAt: Date.now() - 3600000 * 2,
+    createdAt: 1768867200000, // Jan 20, 2026
     sources: [
       { id: 's1', type: 'text', title: 'Feature List', content: 'Samsung is planning a major overhaul for DeX in One UI 8.5. Key features include AI-driven window management, real-time multitasking summaries, and improved integration with Galaxy AI tools. The redesign aims to make desktop mode more fluid on tablets.' },
       { id: 's2', type: 'text', title: 'Hardware Requirements', content: 'Compatible devices will include Galaxy S24 series and onwards. NPU requirements are high for local AI processing.' }
@@ -29,7 +28,7 @@ export const MOCK_NOTEBOOKS: Notebook[] = [
     id: '2',
     title: 'Quantum Physics Intro',
     emoji: '⚛️',
-    createdAt: Date.now() - 86400000,
+    createdAt: 1768780800000, // Jan 19, 2026
     sources: [],
     color: COLORS[1]
   },
@@ -37,7 +36,7 @@ export const MOCK_NOTEBOOKS: Notebook[] = [
     id: '3',
     title: 'Market Research Q3',
     emoji: '📈',
-    createdAt: Date.now() - 172800000,
+    createdAt: 1768694400000, // Jan 18, 2026
     sources: [],
     color: COLORS[2]
   }

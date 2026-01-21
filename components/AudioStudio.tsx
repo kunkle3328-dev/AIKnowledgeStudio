@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useRef } from 'react';
 import { Notebook } from '../types';
 import { GeminiService } from '../services/geminiService';
 import { decode, decodeAudioData, createBlob } from '../utils/audioUtils';
@@ -14,7 +14,7 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook }) => {
   const [isLive, setIsLive] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [intensity, setIntensity] = useState(0.5);
+  const [error, setError] = useState<string | null>(null);
   
   const gemini = useRef(new GeminiService());
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -23,19 +23,24 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook }) => {
   const liveSessionRef = useRef<any>(null);
 
   const stopAllAudio = () => {
-    sourcesRef.current.forEach(s => s.stop());
+    sourcesRef.current.forEach(s => {
+      try { s.stop(); } catch(e) {}
+    });
     sourcesRef.current.clear();
     nextStartTimeRef.current = 0;
     setIsPlaying(false);
+    setError(null);
   };
 
   const handleOverviewPlay = async () => {
-    if (isPlaying) {
+    if (isPlaying && !isLive) {
       stopAllAudio();
       return;
     }
+    if (isLive) return;
 
     setLoading(true);
+    setError(null);
     try {
       const audioData = await gemini.current.generateTTSOverview(notebook);
       if (!audioCtxRef.current) {
@@ -55,19 +60,21 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook }) => {
       sourcesRef.current.add(source);
       source.start();
       setIsPlaying(true);
-      setLoading(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setError("Failed to generate audio overview.");
+    } finally {
       setLoading(false);
     }
   };
 
   const startLiveSession = async () => {
     setLoading(true);
+    setError(null);
     setIsLive(true);
     stopAllAudio();
 
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const config = gemini.current.getLiveSessionConfig(notebook);
 
     const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
@@ -76,7 +83,6 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook }) => {
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
       const sessionPromise = ai.live.connect({
         ...config,
         callbacks: {
@@ -107,11 +113,17 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook }) => {
             }
             if (msg.serverContent?.interrupted) {
               stopAllAudio();
-              setIsPlaying(true); // resume anim after interrupt
+              setIsPlaying(true);
             }
           },
-          onerror: (e) => console.error("Live Error", e),
-          onclose: () => setIsLive(false)
+          onerror: (e) => {
+            console.error("Live Error", e);
+            setError("Live session error.");
+          },
+          onclose: () => {
+            setIsLive(false);
+            setIsPlaying(false);
+          }
         }
       });
       liveSessionRef.current = await sessionPromise;
@@ -119,12 +131,13 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook }) => {
       console.error(err);
       setIsLive(false);
       setLoading(false);
+      setError("Session failed.");
     }
   };
 
   const stopLiveSession = () => {
     if (liveSessionRef.current) {
-      liveSessionRef.current.close();
+      try { liveSessionRef.current.close(); } catch(e) {}
       liveSessionRef.current = null;
     }
     stopAllAudio();
@@ -133,62 +146,63 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook }) => {
 
   return (
     <div className="flex-1 flex flex-col bg-black relative overflow-hidden">
-      {/* Background Studio Branding */}
-      <div className="absolute top-12 left-0 right-0 text-center px-4">
-        <h2 className="text-zinc-500 text-xs font-medium tracking-widest uppercase mb-1">Studio</h2>
-        <h1 className="text-white text-lg font-semibold truncate px-8">{notebook.title}</h1>
+      <div className="absolute top-8 left-0 right-0 text-center px-6">
+        <h2 className="text-zinc-500 text-[9px] font-bold tracking-[0.2em] uppercase mb-1.5">Studio</h2>
+        <h1 className="text-white text-lg font-bold truncate max-w-xs mx-auto">{notebook.title}</h1>
+        {error && <div className="text-red-400 text-[10px] mt-1 px-3 bg-red-900/20 py-1.5 rounded-lg inline-block border border-red-900/50">{error}</div>}
       </div>
 
-      <div className="flex-1 flex items-center justify-center p-4">
-        <div className="w-full h-64 relative">
-          <Waveform isActive={isPlaying} intensity={intensity} />
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div className="w-full h-64 relative flex items-center justify-center">
+          <Waveform isActive={isPlaying} />
           {loading && (
-             <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-white"></div>
+             <div className="absolute inset-0 flex items-center justify-center">
+                <div className="w-10 h-10 border-4 border-white/20 border-t-white rounded-full animate-spin"></div>
              </div>
           )}
         </div>
       </div>
 
       <div className="pb-safe px-6 mb-24">
-        <div className="flex flex-col items-center gap-6">
-          <div className="flex items-center gap-12">
-            <button className="p-3 text-zinc-500 hover:text-white transition-colors">
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2h0a3.13 3.13 0 0 1 3 3.88Z"/></svg>
+        <div className="flex flex-col items-center gap-8">
+          <div className="flex items-center gap-8">
+            <button className="p-4 text-zinc-400 hover:text-white transition-colors bg-zinc-900/40 rounded-full active:scale-90 transition-transform">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M7 10v12"/><path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2h0a3.13 3.13 0 0 1 3 3.88Z"/></svg>
             </button>
             
             {isLive ? (
               <button 
                 onClick={stopLiveSession}
-                className="bg-red-500 text-white px-10 py-4 rounded-full font-bold shadow-xl shadow-red-500/20 active:scale-95 transition-all flex items-center gap-2"
+                className="bg-red-600 text-white px-8 py-4 rounded-full font-black tracking-wide shadow-2xl active:scale-95 transition-all flex items-center gap-2.5 uppercase text-[10px]"
               >
-                <span className="w-2 h-2 bg-white rounded-full animate-pulse"></span>
+                <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></span>
                 End Session
               </button>
             ) : (
               <button 
                 onClick={startLiveSession}
                 disabled={loading}
-                className="bg-blue-600 text-white px-12 py-4 rounded-full font-bold shadow-xl shadow-blue-500/20 active:scale-95 transition-all disabled:opacity-50"
+                className="bg-blue-600 text-white px-10 py-4 rounded-full font-black tracking-wide shadow-2xl active:scale-95 transition-all disabled:opacity-50 uppercase text-[10px] flex items-center gap-2 pulse-btn"
               >
                 ✋ Join Live
               </button>
             )}
 
-            <button className="p-3 text-zinc-500 hover:text-white transition-colors">
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22h0a3.13 3.13 0 0 1-3-3.88Z"/></svg>
+            <button className="p-4 text-zinc-400 hover:text-white transition-colors bg-zinc-900/40 rounded-full active:scale-90 transition-transform">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M17 14V2"/><path d="M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79-1.11L12 22h0a3.13 3.13 0 0 1-3-3.88Z"/></svg>
             </button>
           </div>
 
           {!isLive && (
             <button 
               onClick={handleOverviewPlay}
-              className="bg-zinc-800/80 p-4 rounded-full text-white hover:bg-zinc-700 transition-colors"
+              disabled={loading}
+              className="bg-white p-5 rounded-full text-black shadow-2xl active:scale-90 transition-all disabled:opacity-50"
             >
               {isPlaying ? (
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="4" height="16" x="6" y="4"/><rect width="4" height="16" x="14" y="4"/></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><rect width="4" height="16" x="6" y="4" rx="1"/><rect width="4" height="16" x="14" y="4" rx="1"/></svg>
               ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
               )}
             </button>
           )}
