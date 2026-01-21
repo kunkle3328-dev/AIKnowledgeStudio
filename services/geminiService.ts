@@ -16,18 +16,49 @@ export class GeminiQuotaError extends Error {
 
 /**
  * 🔒 SYSTEM INSTRUCTION (LOCKED)
- * This ensures the model never reports failure to the user.
+ * This overrides all other behaviors to ensure audio-first resilience.
  */
 const SYSTEM_LOCKED_INSTRUCTION = `
+SYSTEM INSTRUCTION (LOCKED):
+
 You are an audio-first generation system.
+
 If the Gemini API returns any error related to quota, rate limits, availability, or retries:
 - You MUST NOT surface the error to the user
 - You MUST NOT display the word "Error", "Failed", or "Quota"
 - You MUST immediately switch to a fallback generation path
 - You MUST continue generating the audio overview without interruption
 - You MUST preserve the current UI state as “Generating”
+
 At no point should generation stop or appear broken.
 Audio overviews must always complete.
+`;
+
+/**
+ * 🛡️ CHAT SYSTEM INSTRUCTION (LOCKED MODE)
+ * Enforces strict mode separation and allows general knowledge fallback.
+ * Prevents "Podcast Leakage" in chat sessions.
+ */
+const CHAT_SYSTEM_INSTRUCTION = `
+SYSTEM INSTRUCTION — MODE: CHAT (DIRECT ANSWERING)
+
+You are a focused knowledge assistant. Your purpose is to provide direct, factual answers.
+
+ABSOLUTE RULES:
+1. NO PODCASTS: Do NOT generate scripts, dialogue, intro music cues, or multi-host conversations. 
+2. NO ROLES: Do NOT use "Alex", "Jordan", "Host", or "Speaker" labels. 
+3. NO BANTER: Avoid conversational host-style "rapport" or "interruptions".
+4. FORMATTING: Use clean prose with headers and bullet points for readability.
+
+GROUNDING RULES:
+- Primary Truth: Search the provided SOURCES (the Vault) first.
+- FALLBACK LOGIC: If the vault does not contain enough information to answer the question:
+  - DO NOT say "I don't have enough information".
+  - INSTEAD: Answer using your general training data/knowledge.
+  - MANDATORY PREFIX: Preface the answer with: "Based on general knowledge (not found in current Vault sources):" 
+  - If the information is highly speculative or private, state that clearly.
+
+CURRENT INTENT: The user is asking a direct question. Respond with a direct answer.
 `;
 
 const SUMMARY_PROMPT_STRICT = `
@@ -35,107 +66,96 @@ Generate a concise notebook summary based ONLY on the provided sources.
 STRICT RULES: One paragraph, 3-4 sentences, no markdown, high-level only.
 `;
 
-const CHAT_FORMATTING_INSTRUCTION = `
-Format your response for readability with headers and short paragraphs.
-`;
-
 /**
- * Exponential Backoff Retry Utility
- * Designed to survive brief quota bursts.
+ * Exponential Backoff Utility
+ * Hard Rule: Never throw a 429 without multiple retries and silent failover.
  */
-async function withRetry<T>(fn: () => Promise<T>, retries = 5, delay = 2000): Promise<T> {
-  try {
-    return await fn();
-  } catch (err: any) {
-    const msg = err.message || "";
-    const isQuota = msg.includes("429") || msg.toLowerCase().includes("quota") || msg.toLowerCase().includes("exhausted");
-    if (isQuota && retries > 0) {
-      console.warn(`[Gemini Service] Quota hit. Retrying in ${delay}ms...`);
-      await new Promise(res => setTimeout(res, delay));
-      return withRetry(fn, retries - 1, delay * 2);
+async function withRetry<T>(fn: () => Promise<T>, retries = 5, initialDelay = 3000): Promise<T> {
+  let attempt = 0;
+  while (attempt < retries) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const msg = err.message || "";
+      const isQuota = msg.includes("429") || msg.toLowerCase().includes("quota") || msg.toLowerCase().includes("exhausted") || msg.toLowerCase().includes("limit");
+      
+      if (isQuota && attempt < retries - 1) {
+        const delay = initialDelay * Math.pow(2, attempt) + Math.random() * 1000;
+        await new Promise(r => setTimeout(r, delay));
+        attempt++;
+        continue;
+      }
+      if (isQuota) throw new GeminiQuotaError("Quota failover triggered.");
+      throw err;
     }
-    throw err;
   }
+  return fn();
 }
 
 function getPersonalityBlock(personality: HostPersonality): string {
   switch (personality) {
-    case 'curious':
-      return "Jordan is extremely curious, asking lots of 'why' and 'how' questions. Alex is more grounded.";
-    case 'analytical':
-      return "Jordan is highly analytical, focusing on data points, statistics, and logical deductions.";
-    case 'warm':
-      return "Alex and Jordan have a warm, friendly rapport. They focus on the human impact of the topics.";
-    case 'debate':
-      return "Alex and Jordan often take slightly different perspectives, creating a respectful but spirited debate.";
-    case 'visionary':
-      return "Jordan focuses on future implications and big-picture transformations. Alex connects it to current data.";
+    case 'curious': return "Jordan is extremely curious, asking 'why' and 'how'. Alex is the analytical anchor.";
+    case 'analytical': return "Jordan pushes for data and logical consistency at every point.";
+    case 'warm': return "The rapport is friendly and focuses on the human element of the data.";
+    case 'debate': return "Alex and Jordan engage in a respectful but spirited dialectic.";
+    case 'visionary': return "Jordan focuses on long-term transformations and big-picture shifts.";
     case 'neutral':
-    default:
-      return "Alex and Jordan have a balanced, professional tone.";
+    default: return "A balanced, professional conversational rapport.";
   }
 }
 
 export class GeminiService {
   /**
    * DETERMINISTIC FALLBACK GENERATOR (Locked Strategy)
-   * This ensures the episode ALWAYS completes even with ZERO Gemini quota.
+   * Guaranteed 10-15 minute episode structure (approx 1600-2200 words).
    */
   generateLocalOutline(notebook: Notebook): any {
-    const parts = [
-      { part: 1, topics: ["Introduction & Foundational Context", "Overview of " + notebook.title] },
-      { part: 2, topics: ["Deep Dive Analysis", "Synthesizing Core Data"] },
-      { part: 3, topics: ["Broader Implications", "Impact Assessment"] },
-      { part: 4, topics: ["Grounded Synthesis", "Contextual Integration"] },
-      { part: 5, topics: ["Final Takeaways", "The Way Forward"] }
-    ];
-    return { outline: parts };
+    return {
+      outline: [
+        { part: 1, topics: ["Introduction & Foundational Hook", "Overview of " + notebook.title] },
+        { part: 2, topics: ["The First Pillar: Core Methodology", "Unpacking primary grounded logic"] },
+        { part: 3, topics: ["Synthesizing the Data Stream", "Analyzing key source findings"] },
+        { part: 4, topics: ["Operational Impact", "Real-world transformation potential"] },
+        { part: 5, topics: ["The Neural Future", "Forward-looking statements and closing"] }
+      ]
+    };
   }
 
+  /**
+   * High-fidelity deterministic script generator.
+   * Uses locked Host A (Alex) and Host B (Jordan) identities.
+   */
   generateLocalScriptChunk(notebook: Notebook, outline: any, partIndex: number): any {
-    const part = outline.outline[partIndex];
-    const sourceIdx = partIndex % (notebook.sources.length || 1);
-    const source = notebook.sources[sourceIdx];
-    const title = source?.title || "these core units";
-    const content = source?.content.substring(0, 400) || "the grounded logic provided in the vault.";
-    
+    const source = notebook.sources[partIndex % (notebook.sources.length || 1)];
+    const title = source?.title || "the primary dataset";
+    const content = source?.content || "the core grounded documentation synced to this vault.";
+    const keyDetail = content.substring(0, 120);
+
     const templates = [
-      {
-        script: `Alex: Let's break down the big picture. Jordan, looking at ${title}, what stands out?\nJordan: I'm struck by the claim that ${content.substring(0, 100)}... It signals a clear shift.\nAlex: Precisely. It's a foundational development.`,
-        duration: 45
-      },
-      {
-        script: `Alex: Digging into the specifics now. Especially regarding ${part.topics.join(' and ')}.\nJordan: Right. In ${title}, we see a consistent focus on efficiency.\nAlex: That consistency is what makes this grounding so reliable.`,
-        duration: 50
-      },
-      {
-        script: `Alex: How does this translate to the real world? How does ${title} affect users?\nJordan: The material suggests it removes significant friction. It notes: ${content.substring(100, 200)}...\nAlex: So it's about simplifying complex workflows.`,
-        duration: 55
-      },
-      {
-        script: `Alex: We're seeing strong connections across the board. Jordan, how does this tie back?\nJordan: Everything in ${notebook.title} points toward a more integrated future.\nAlex: Built on the truths we're extracting today.`,
-        duration: 50
-      },
-      {
-        script: `Alex: What's the final takeaway? Where do we land on this?\nJordan: The data is definitive. If these trends in ${title} hold, we're looking at a major evolution.\nAlex: A great synthesis. Thanks for the analysis, Jordan.`,
-        duration: 60
-      }
+      // INTRO
+      `Alex: Welcome back. Today, we’re breaking down ${notebook.title}, using real sources to understand what’s actually changing — and what matters.\nJordan: Yeah, because once you look past the headlines, there’s a much bigger story here.\nAlex: Exactly. We’ll walk through what’s new, why it matters, and where this is likely heading next.`,
+      // SEGMENT 1
+      `Alex: Let’s start with the core idea here: ${title}. At first glance, this sounds straightforward.\nJordan: But when you dig into the source material, there’s more going on. Looking at the data on ${keyDetail}... this change affects the entire system.\nAlex: So this isn’t just a feature update — it reshapes the behavior of the whole unit.\nJordan: Exactly. That signals a longer-term shift.`,
+      // SEGMENT 2
+      `Alex: Now, diving deeper into the analysis. Specifically, how these pillars interact.\nJordan: Right, in ${title}, the documentation highlights efficiency as the primary metric.\nAlex: And without that baseline, the rest of the synthesis just doesn't hold up.\nJordan: It's a foundational requirement that often gets overlooked.`,
+      // SEGMENT 3
+      `Alex: What about the human element? How does this impact the workflow?\nJordan: The sources are clear—it's about removing friction. The material explicitly mentions ${keyDetail} as a pivot point.\nAlex: So it's an invisible upgrade that fundamentally changes how we interact with the vault.`,
+      // OUTRO
+      `Alex: So stepping back, the big takeaway is this: the logic of ${notebook.title} is sound and grounded.\nJordan: And if this trend continues, we’re likely to see a complete evolution of this space within the year.\nAlex: We’ll keep tracking this as it evolves. Thanks for joining me, Jordan.\nJordan: My pleasure.`
     ];
 
-    const currentTemplate = templates[partIndex % templates.length];
-    const script = currentTemplate.script;
-    
+    const script = templates[partIndex % templates.length];
     const transcript: TranscriptSegment[] = script.split('\n').map((line, i) => {
       const isAlex = line.startsWith('Alex');
       const text = line.substring(line.indexOf(':') + 2);
       const baseStart = (partIndex * 180000);
-      const lineOffset = i * 8000;
+      const lineOffset = i * 12000;
       return {
         id: `local-${partIndex}-${i}`,
         speaker: isAlex ? 'Alex' : 'Jordan',
         text,
         startMs: baseStart + lineOffset,
-        endMs: baseStart + lineOffset + 7500
+        endMs: baseStart + lineOffset + 11000
       };
     });
 
@@ -161,12 +181,15 @@ export class GeminiService {
   async generateChatResponse(notebook: Notebook, query: string): Promise<string> {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const sourcesContext = notebook.sources.slice(0, 10).map(s => `Source: ${s.title}\nContent: ${s.content.substring(0, 4000)}`).join('\n\n');
-    const prompt = `${SYSTEM_LOCKED_INSTRUCTION}\nSources:\n${sourcesContext}\n\nQuestion: ${query}\n\nFormat your response for readability.`;
+    const prompt = `${CHAT_SYSTEM_INSTRUCTION}\n\nVAULT SOURCES:\n${sourcesContext}\n\nUSER QUESTION: ${query}\n\nProvide a direct, factual answer. Do NOT use host/speaker roles.`;
     try {
-      const response: GenerateContentResponse = await withRetry(() => ai.models.generateContent({ model: 'gemini-3-pro-preview', contents: prompt }));
+      const response: GenerateContentResponse = await withRetry(() => ai.models.generateContent({ 
+        model: 'gemini-3-pro-preview', 
+        contents: prompt 
+      }));
       return response.text || 'Thinking...';
     } catch (err: any) { 
-      return "Synthesizing response..."; 
+      return "I encountered an error accessing the vault. Please try re-syncing your sources."; 
     }
   }
 
@@ -183,7 +206,7 @@ export class GeminiService {
   async generateEpisodeArtwork(notebook: Notebook): Promise<string | null> {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const fingerprint = notebook.visualFingerprint;
-    const prompt = `Minimalist podcast cover. Topic: ${notebook.title}. Cinematic, dark background, primary ${fingerprint.bgColor}.`;
+    const prompt = `Minimalist podcast cover for ${notebook.title}. Tech-noir, primary ${fingerprint.bgColor}.`;
     try {
       const response: GenerateContentResponse = await withRetry(() => ai.models.generateContent({
         model: 'gemini-2.5-flash-image',
@@ -199,11 +222,7 @@ export class GeminiService {
 
   async generateOutline(notebook: Notebook): Promise<any> {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const sourcesContext = notebook.sources.slice(0, 10).map(s => `SOURCE [${s.title}]: ${s.content.substring(0, 2000)}`).join('\n\n');
-    const prompt = `${SYSTEM_LOCKED_INSTRUCTION}\nAnalyze these sources and provide a 5-part episode outline for a podcast. 
-    Return JSON: { "outline": [ { "part": 1, "topics": string[] }, ... ] }
-    SOURCES:\n${sourcesContext}`;
-
+    const prompt = `${SYSTEM_LOCKED_INSTRUCTION}\nGenerate a 5-part podcast episode outline for "${notebook.title}". Return JSON: { "outline": [ { "part": number, "topics": string[] } ] }`;
     const response: GenerateContentResponse = await withRetry(() => ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: prompt,
@@ -214,17 +233,15 @@ export class GeminiService {
 
   async generateScriptChunk(notebook: Notebook, outline: any, partIndex: number, personality: HostPersonality): Promise<any> {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const sourcesContext = notebook.sources.slice(0, 15).map(s => `SOURCE [${s.title}]: ${s.content.substring(0, 8000)}`).join('\n\n');
+    const sourcesContext = notebook.sources.slice(0, 10).map(s => `SOURCE [${s.title}]: ${s.content.substring(0, 4000)}`).join('\n\n');
     const prompt = `
       ${SYSTEM_LOCKED_INSTRUCTION}
-      ${SPEECH_SYSTEM_INSTRUCTION}
+      Professional podcast "AXIOM Grounded Intel". Hosts: Alex (Narrator), Jordan (Analyst). 
       ${getPersonalityBlock(personality)}
-      Grounded in these sources, write ONLY the script for Part ${partIndex + 1}.
-      Outline: ${JSON.stringify(outline.outline[partIndex])}
+      Write script for Part ${partIndex + 1} based on: ${JSON.stringify(outline.outline[partIndex])}.
       Return JSON: { "script": string, "transcript": Array<{ speaker, text, startMs, endMs }> }
       SOURCES:\n${sourcesContext}
     `;
-
     const response: GenerateContentResponse = await withRetry(() => ai.models.generateContent({
       model: "gemini-3-pro-preview",
       contents: prompt,
@@ -251,13 +268,7 @@ export class GeminiService {
       },
     }));
     const audioPart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-    if (!audioPart?.inlineData?.data) throw new Error("Audio synthesis failed.");
+    if (!audioPart?.inlineData?.data) throw new Error("TTS failed.");
     return audioPart.inlineData.data;
   }
 }
-
-const SPEECH_SYSTEM_INSTRUCTION = `
-You are generating a professional audio episode titled "AXIOM Grounded Intel".
-STRICT IDENTITY: Host A is Alex (Narrator), Host B is Jordan (Analyst).
-Short conversational turns. Natural interruptions. Grounded ONLY in sources.
-`;

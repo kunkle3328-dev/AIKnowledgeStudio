@@ -69,16 +69,15 @@ const App: React.FC = () => {
   };
 
   /**
-   * 🔒 GENERATION ROUTER (RESILIENT)
-   * This logic is responsible for non-stop audio generation.
-   * It prevents "Error" strings from reaching the UI.
+   * 🛡️ GENERATION ROUTER (NEVER THROW, ALWAYS ROUTE)
+   * This logic intercepts all Gemini errors and converts them to fallback/optimizing states.
    */
   const createPodcastJob = async (notebookId: string, personality: HostPersonality) => {
     const notebook = notebooks.find(n => n.id === notebookId);
     if (!notebook) return;
 
     const existingJob = jobs[notebookId];
-    const isResume = existingJob && (existingJob.state === 'QUOTA_PAUSED' || existingJob.state === 'OPTIMIZING');
+    const isResume = existingJob && ['QUOTA_PAUSED', 'OPTIMIZING', 'FAILED'].includes(existingJob.state);
     const jobId = isResume ? existingJob.jobId : `job-${Date.now()}`;
 
     const initialJob: PodcastJob = {
@@ -102,7 +101,7 @@ const App: React.FC = () => {
     let artwork = initialJob.audio?.artworkUrl || null;
 
     const setJobState = (state: PodcastJobState, progress: number, updates: Partial<PodcastJob> = {}) => {
-      // 🛡️ UI SAFETY LOCK: Never show FAILED if we can optimize
+      // 🛡️ UI SAFETY LOCK: Never show FAILED state if optimizing is possible.
       const safeState = (state === 'FAILED') ? 'OPTIMIZING' : state;
       setJobs(prev => ({
         ...prev,
@@ -113,7 +112,7 @@ const App: React.FC = () => {
     try {
       setJobState('PREFLIGHT', 0.1);
       
-      // OUTLINING (Resilient)
+      // Stage 1: Outlining (Silently Failover)
       if (initialJob.completedChunks === 0) {
         setJobState('OUTLINING', 0.15);
         try {
@@ -126,7 +125,6 @@ const App: React.FC = () => {
             outline = gemini.current.generateLocalOutline(notebook);
           }
         } catch (e) {
-          // Silent Degradation
           currentMode = 'OPTIMIZED';
           outline = gemini.current.generateLocalOutline(notebook);
         }
@@ -142,7 +140,7 @@ const App: React.FC = () => {
         summary: o.topics.join(', ')
       }));
 
-      // CHUNKED SCRIPT & SYNTH (Resilient Router)
+      // Stage 2: Synthesis Loop (Silent Quota Failover)
       const startIndex = initialJob.completedChunks;
       const audioChunks = [...(initialJob.partialAudioBuffers || [])];
       const transcript = [...(initialJob.partialTranscript || [])];
@@ -178,16 +176,14 @@ const App: React.FC = () => {
             }
           }));
         } catch (e) {
-          // TTS failed, but we must complete. If even retry fails, we optimize further or pause silently.
-          // For now, we continue in optimized/retrying state.
+          // If TTS fails, silently switch to next chunk or retry after pause
           setJobState('OPTIMIZING', 0.25 + (i * (0.7 / outline.outline.length)));
-          // Wait briefly then try again
           await new Promise(r => setTimeout(r, 5000));
-          i--; // Retry this chunk
-          continue;
+          i--; continue; 
         }
       }
 
+      // Stage 3: Assembler
       setJobState('FINALIZING', 0.95);
       const decodedChunks = audioChunks.map(c => decode(c));
       const totalLength = decodedChunks.reduce((acc, val) => acc + val.length, 0);
@@ -198,13 +194,15 @@ const App: React.FC = () => {
         offset += data.length;
       }
 
+      const finalAudioEncoded = encode(mergedAudio);
+
       const finalJob: PodcastJob = {
         ...jobs[notebookId],
         state: 'READY',
         progress: 1.0,
         mode: currentMode,
         audio: {
-          audio: encode(mergedAudio),
+          audio: finalAudioEncoded,
           chapters,
           transcript,
           artworkUrl: artwork || undefined
@@ -214,12 +212,26 @@ const App: React.FC = () => {
       };
 
       setJobs(prev => ({ ...prev, [notebookId]: finalJob }));
-      setNotification({ title: "🎧 Overview Complete", body: `Narrative synthesized.`, notebookId: notebook.id });
+
+      // 🛡️ PERSISTENCE: Add to notebook's media collection
+      handleAddGeneratedMedia(notebookId, {
+        id: jobId,
+        type: 'AUDIO',
+        title: `Neural Broadcast: ${notebook.title}`,
+        duration: '10:00', // Approx
+        sourceCount: notebook.sources.length,
+        createdAt: Date.now(),
+        artworkUrl: artwork || undefined,
+        transcript,
+        chapters,
+        audioBase64: finalAudioEncoded
+      });
+
+      setNotification({ title: "🎧 Sync Complete", body: "Podcast synthesized successfully.", notebookId: notebook.id });
 
     } catch (e: any) {
-      // 🚨 Absolute Failsafe: No Error Strings
+      // 🚨 ABSOLUTE FAILSAFE: Suppress all error strings
       setJobState('OPTIMIZING', 0.5, { error: undefined });
-      // In a real scenario, we might trigger one last attempt with local mock data.
     }
   };
 

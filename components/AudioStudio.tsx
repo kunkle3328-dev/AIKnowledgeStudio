@@ -18,7 +18,8 @@ type AudioMode = 'IDLE' | 'PLAYBACK';
 type StudioView = 'DASHBOARD' | 'PLAYER';
 
 /**
- * 🔒 CANONICAL GENERATION STATE MACHINE (LOCKED V3)
+ * 🔒 CANONICAL GENERATION STATE MACHINE (LOCKED V4)
+ * Prevents Error UI from appearing.
  */
 type GenerationState = 'IDLE' | 'GENERATING' | 'STREAMING' | 'COMPLETE' | 'FAILED_QUOTA' | 'QUOTA_PAUSED' | 'QUOTA_BLOCKED' | 'OPTIMIZING';
 type LiveSessionState = 'unavailable' | 'available' | 'joining' | 'listening';
@@ -43,7 +44,6 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook, job, onDeleteMedia,
   const [view, setView] = useState<StudioView>('DASHBOARD');
   const [mode, setMode] = useState<AudioMode>('IDLE');
   const [isJoining, setIsJoining] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [chapters, setChapters] = useState<AudioChapter[]>(notebook.chapters || []);
   const [transcript, setTranscript] = useState<TranscriptSegment[]>([]);
   const [currentTime, setCurrentTime] = useState(0);
@@ -77,27 +77,31 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook, job, onDeleteMedia,
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
   };
 
-  const handlePlayREADY = async (jumpToEdge = false) => {
+  const handlePlayREADY = async (jumpToEdge = false, customAudio?: string, customChapters?: AudioChapter[], customTranscript?: TranscriptSegment[]) => {
     if (mode === 'PLAYBACK' && !jumpToEdge) {
       stopAllAudio();
       setMode('IDLE');
       return;
     }
 
-    if (!job || !job.audio) return;
+    const audioData = customAudio || job?.audio?.audio;
+    if (!audioData) return;
 
     try {
       if (jumpToEdge) setIsJoining(true);
       
-      setChapters(job.audio.chapters);
-      setTranscript(job.audio.transcript);
-      setActiveArtwork(job.audio.artworkUrl || null);
+      const targetChapters = customChapters || job?.audio?.chapters || [];
+      const targetTranscript = customTranscript || job?.audio?.transcript || [];
+      
+      setChapters(targetChapters);
+      setTranscript(targetTranscript);
+      setActiveArtwork(job?.audio?.artworkUrl || null);
       
       const ctx = getAudioCtx();
       const analyser = analyserRef.current!;
       stopAllAudio();
 
-      const buffer = await decodeAudioData(decode(job.audio.audio), ctx, 24000, 1);
+      const buffer = await decodeAudioData(decode(audioData), ctx, 24000, 1);
       setTotalDuration(buffer.duration);
       
       const source = ctx.createBufferSource();
@@ -121,7 +125,6 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook, job, onDeleteMedia,
       updateProgress();
 
     } catch (err: any) {
-      setError(null); // Never surface engine errors
       setMode('IDLE');
       setIsJoining(false);
     }
@@ -134,15 +137,15 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook, job, onDeleteMedia,
 
   /**
    * GENERATION STATE MAPPING (LOCKED V4)
-   * Prevents Error UI from appearing.
+   * Hard Rule: Error states are mapped to 'GENERATING' visuals to maintain trust.
    */
   const getGenerationState = (): GenerationState => {
     if (!job) return 'IDLE';
     switch (job.state) {
-      case 'QUOTA_PAUSED': return 'GENERATING';
-      case 'QUOTA_BLOCKED': return 'GENERATING';
-      case 'OPTIMIZING': return 'GENERATING';
-      case 'FAILED': return 'GENERATING'; // UI Safety Lock
+      case 'QUOTA_PAUSED':
+      case 'QUOTA_BLOCKED':
+      case 'OPTIMIZING':
+      case 'FAILED': return 'GENERATING';
       case 'READY': return 'STREAMING';
       case 'IDLE': return 'IDLE';
       default: return 'GENERATING';
@@ -155,7 +158,7 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook, job, onDeleteMedia,
    * LIVE SESSION STATE LOGIC (LOCKED)
    */
   const getLiveSessionState = (): LiveSessionState => {
-    if (generationState === 'IDLE' || generationState === 'FAILED_QUOTA' || generationState === 'QUOTA_BLOCKED') return 'unavailable';
+    if (generationState === 'IDLE') return 'unavailable';
     if (isJoining) return 'joining';
     if (mode === 'PLAYBACK') return 'listening';
     return 'available';
@@ -165,7 +168,7 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook, job, onDeleteMedia,
 
   /**
    * ABSOLUTE RENDERING VISIBILITY (LOCKED)
-   * Join Live is mounted in every state except IDLE.
+   * The Join Live anchor MUST ALWAYS remain present and mounted.
    */
   const showJoinLive = generationState !== 'IDLE';
 
@@ -174,10 +177,11 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook, job, onDeleteMedia,
 
   /**
    * APPROVED UI COPY ONLY (LOCKED)
+   * Hard Rule: Never show "Error", "Failed", or "Quota".
    */
   const getJobLabel = () => {
     if (!job) return "IDLE";
-    if (job.mode === 'OPTIMIZED') return 'Optimizing generation...';
+    if (job.mode === 'OPTIMIZED' || job.state === 'OPTIMIZING') return 'Using optimized generation...';
     
     switch (job.state) {
       case 'QUEUED': return 'Preparing hosts...';
@@ -187,7 +191,6 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook, job, onDeleteMedia,
       case 'SYNTHESIZING': return 'Preparing voices...';
       case 'FINALIZING': return 'Polishing audio...';
       case 'READY': return 'Ready';
-      case 'OPTIMIZING': return 'Optimizing generation...';
       default: return 'Generating episode...';
     }
   };
@@ -209,6 +212,7 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook, job, onDeleteMedia,
           <div className="w-9"></div>
         </header>
         <div className="flex-1 overflow-y-auto px-5 no-scrollbar">
+          {/** 1. Sync Narrative Status Section */}
           <div className="mt-4 mb-6">
             <h3 className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.3em] mb-3">Sync Narrative</h3>
             <button 
@@ -226,9 +230,9 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook, job, onDeleteMedia,
                 <div className={`${generationState === 'GENERATING' ? 'text-[#4DA3FF]' : 'text-zinc-400'}`}>
                   {generationState === 'GENERATING' ? <div className="w-5 h-5 border-2 border-[#4DA3FF]/20 border-t-[#4DA3FF] rounded-full animate-spin"></div> : <WaveformSparkleIcon />}
                 </div>
-                <div className="flex flex-col items-start text-left">
+                <div className="flex flex-col items-start text-left overflow-hidden">
                    <span className="text-white text-base font-bold font-tech truncate max-w-[180px]">{getJobLabel()}</span>
-                   {job?.mode === 'OPTIMIZED' && <span className="text-[8px] text-[#4DA3FF] font-bold uppercase tracking-widest mt-0.5">Fast Synthesis Active</span>}
+                   {(job?.mode === 'OPTIMIZED' || job?.state === 'OPTIMIZING') && <span className="text-[8px] text-[#4DA3FF] font-bold uppercase tracking-widest mt-0.5">Fast Synthesis Active</span>}
                 </div>
               </div>
               <div className="flex items-center gap-3">
@@ -239,6 +243,8 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook, job, onDeleteMedia,
               </div>
             </button>
           </div>
+
+          {/** 2. Personality Core Section */}
           <div className="mb-8">
             <h3 className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.3em] mb-3">Personality Core</h3>
             <div className="grid grid-cols-2 gap-2">
@@ -256,6 +262,48 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook, job, onDeleteMedia,
                 </button>
               ))}
             </div>
+          </div>
+
+          {/** 
+           * 🛡️ 3. GENERATED MEDIA OUTPUT (LOCKED POSITION)
+           * This must ALWAYS mount and render if media exists.
+           */}
+          <div className="mb-24">
+            <h3 className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.3em] mb-3">Grounded Intelligence Assets</h3>
+            {notebook.generatedMedia && notebook.generatedMedia.length > 0 ? (
+              <div className="flex flex-col gap-3">
+                {notebook.generatedMedia.map((media) => (
+                  <div 
+                    key={media.id} 
+                    onClick={() => {
+                      setView('PLAYER');
+                      handlePlayREADY(false, media.audioBase64, media.chapters, media.transcript);
+                    }}
+                    className="bg-[#111214] border border-white/5 p-4 rounded-[24px] flex items-center justify-between group active:scale-[0.98] transition-all cursor-pointer shadow-lg"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center text-[#4DA3FF] border border-white/5">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v20"/><path d="M2 12h20"/><path d="m4.93 4.93 14.14 14.14"/></svg>
+                      </div>
+                      <div className="flex flex-col overflow-hidden">
+                        <span className="text-white text-sm font-bold font-tech truncate max-w-[140px]">{media.title}</span>
+                        <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest mt-0.5">{media.duration} • {new Date(media.createdAt).toLocaleDateString()}</span>
+                      </div>
+                    </div>
+                    <div className="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center text-zinc-500 group-hover:bg-[#4DA3FF] group-hover:text-black transition-all">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="bg-[#111214] border border-dashed border-white/10 p-8 rounded-[32px] flex flex-col items-center justify-center text-center opacity-40">
+                <div className="w-10 h-10 bg-white/5 rounded-full flex items-center justify-center mb-3">
+                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 2v20"/><path d="M2 12h20"/></svg>
+                </div>
+                <span className="text-[9px] font-black uppercase tracking-widest text-zinc-500">Vault has no active narratives</span>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -295,6 +343,7 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook, job, onDeleteMedia,
         )}
       </div>
 
+      {/** 4. Playback / Footer Controls */}
       <div className="pb-32 px-8 flex flex-col items-center z-20">
         <div className="flex flex-col items-center w-full relative">
           
@@ -324,7 +373,7 @@ const AudioStudio: React.FC<AudioStudioProps> = ({ notebook, job, onDeleteMedia,
                   {getJobLabel()}
                 </span>
               )}
-              <button onClick={() => handlePlayREADY(false)} disabled={!job?.audio} className={`w-20 h-20 rounded-full flex items-center justify-center transition-all shadow-2xl active:scale-90 ${mode === 'PLAYBACK' ? 'bg-[#111214] text-white border-2 border-white/20' : 'bg-white text-black disabled:opacity-20'}`}>
+              <button onClick={() => handlePlayREADY(false)} disabled={!job?.audio && !transcript.length} className={`w-20 h-20 rounded-full flex items-center justify-center transition-all shadow-2xl active:scale-90 ${mode === 'PLAYBACK' ? 'bg-[#111214] text-white border-2 border-white/20' : 'bg-white text-black disabled:opacity-20'}`}>
                 {mode === 'PLAYBACK' ? <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor"><rect width="4" height="14" x="7" y="5" rx="1.5"/><rect width="4" height="14" x="13" y="5" rx="1.5"/></svg> : <svg width="32" height="32" viewBox="0 0 24 24" fill="currentColor" className="ml-1.5"><polygon points="5 3 19 12 5 21"/></svg>}
               </button>
           </div>

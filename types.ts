@@ -32,6 +32,7 @@ export interface GeneratedMedia {
   artworkUrl?: string;
   transcript?: TranscriptSegment[];
   chapters?: AudioChapter[];
+  audioBase64?: string; // Optional: store the audio if we want to replay it
 }
 
 export type HostPersonality = 'neutral' | 'curious' | 'analytical' | 'warm' | 'debate' | 'visionary';
@@ -50,6 +51,8 @@ export type PodcastJobState =
   | 'OPTIMIZING';
 
 export type GenerationMode = 'PRIMARY' | 'OPTIMIZED' | 'FAILSAFE';
+
+export type ResponseMode = 'CHAT_ANSWER' | 'AUDIO_OVERVIEW' | 'SCRIPT_ONLY';
 
 export interface PodcastJob {
   jobId: string;
