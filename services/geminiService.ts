@@ -1,260 +1,156 @@
 
-import { GoogleGenAI, Modality, GenerateContentResponse, Type } from "@google/genai";
-import { Notebook, AudioChapter, HostPersonality, TranscriptSegment } from "../types";
+import { GoogleGenAI, Modality, GenerateContentResponse } from "@google/genai";
+import { Notebook, HostPersonality } from "../types";
+import { suppressGeminiErrors } from "../utils/suppressGeminiErrors";
 
 export interface SearchResult {
   title: string;
   uri: string;
 }
 
-export class GeminiQuotaError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'GeminiQuotaError';
-  }
-}
-
 /**
- * 🔒 SYSTEM INSTRUCTION (LOCKED)
- * This overrides all other behaviors to ensure audio-first resilience.
+ * 🛡️ RETRIEVAL ENGINE
+ * Scores keywords to find the most relevant context chunks.
  */
-const SYSTEM_LOCKED_INSTRUCTION = `
-SYSTEM INSTRUCTION (LOCKED):
+function retrieveTopK(notebook: Notebook, query: string, k: number = 8): string {
+  const queryTerms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
+  const scoredSources = notebook.sources.map(source => {
+    const content = source.content.toLowerCase();
+    const score = queryTerms.reduce((acc, term) => acc + (content.includes(term) ? 1 : 0), 0);
+    return { source, score };
+  });
 
-You are an audio-first generation system.
+  const topK = scoredSources
+    .filter(s => s.score > 0 || notebook.sources.length <= 2)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, k);
 
-If the Gemini API returns any error related to quota, rate limits, availability, or retries:
-- You MUST NOT surface the error to the user
-- You MUST NOT display the word "Error", "Failed", or "Quota"
-- You MUST immediately switch to a fallback generation path
-- You MUST continue generating the audio overview without interruption
-- You MUST preserve the current UI state as “Generating”
-
-At no point should generation stop or appear broken.
-Audio overviews must always complete.
-`;
-
-/**
- * 🛡️ CHAT SYSTEM INSTRUCTION (LOCKED MODE)
- * Enforces strict mode separation and allows general knowledge fallback.
- * Prevents "Podcast Leakage" in chat sessions.
- */
-const CHAT_SYSTEM_INSTRUCTION = `
-SYSTEM INSTRUCTION — MODE: CHAT (DIRECT ANSWERING)
-
-You are a focused knowledge assistant. Your purpose is to provide direct, factual answers.
-
-ABSOLUTE RULES:
-1. NO PODCASTS: Do NOT generate scripts, dialogue, intro music cues, or multi-host conversations. 
-2. NO ROLES: Do NOT use "Alex", "Jordan", "Host", or "Speaker" labels. 
-3. NO BANTER: Avoid conversational host-style "rapport" or "interruptions".
-4. FORMATTING: Use clean prose with headers and bullet points for readability.
-
-GROUNDING RULES:
-- Primary Truth: Search the provided SOURCES (the Vault) first.
-- FALLBACK LOGIC: If the vault does not contain enough information to answer the question:
-  - DO NOT say "I don't have enough information".
-  - INSTEAD: Answer using your general training data/knowledge.
-  - MANDATORY PREFIX: Preface the answer with: "Based on general knowledge (not found in current Vault sources):" 
-  - If the information is highly speculative or private, state that clearly.
-
-CURRENT INTENT: The user is asking a direct question. Respond with a direct answer.
-`;
-
-const SUMMARY_PROMPT_STRICT = `
-Generate a concise notebook summary based ONLY on the provided sources.
-STRICT RULES: One paragraph, 3-4 sentences, no markdown, high-level only.
-`;
-
-/**
- * Exponential Backoff Utility
- * Hard Rule: Never throw a 429 without multiple retries and silent failover.
- */
-async function withRetry<T>(fn: () => Promise<T>, retries = 5, initialDelay = 3000): Promise<T> {
-  let attempt = 0;
-  while (attempt < retries) {
-    try {
-      return await fn();
-    } catch (err: any) {
-      const msg = err.message || "";
-      const isQuota = msg.includes("429") || msg.toLowerCase().includes("quota") || msg.toLowerCase().includes("exhausted") || msg.toLowerCase().includes("limit");
-      
-      if (isQuota && attempt < retries - 1) {
-        const delay = initialDelay * Math.pow(2, attempt) + Math.random() * 1000;
-        await new Promise(r => setTimeout(r, delay));
-        attempt++;
-        continue;
-      }
-      if (isQuota) throw new GeminiQuotaError("Quota failover triggered.");
-      throw err;
+  if (topK.length === 0) {
+    if (notebook.sources.length > 0) {
+       // Fallback to first few sources if keywords don't match well
+       return notebook.sources.slice(0, 3).map((s, i) => `SOURCE ${i + 1} (${s.title}):\n${s.content}`).join("\n\n");
     }
+    return "No directly relevant sources were found. Answer using careful reasoning and state uncertainty clearly.";
   }
-  return fn();
+
+  return topK.map((tk, i) => `SOURCE ${i + 1} (${tk.source.title}):\n${tk.source.content}`).join("\n\n");
 }
 
-function getPersonalityBlock(personality: HostPersonality): string {
-  switch (personality) {
-    case 'curious': return "Jordan is extremely curious, asking 'why' and 'how'. Alex is the analytical anchor.";
-    case 'analytical': return "Jordan pushes for data and logical consistency at every point.";
-    case 'warm': return "The rapport is friendly and focuses on the human element of the data.";
-    case 'debate': return "Alex and Jordan engage in a respectful but spirited dialectic.";
-    case 'visionary': return "Jordan focuses on long-term transformations and big-picture shifts.";
-    case 'neutral':
-    default: return "A balanced, professional conversational rapport.";
-  }
-}
+const NOTEBOOK_LM_SYSTEM_INSTRUCTION = `
+You are an analytical research assistant.
+Answer using the provided sources as your primary evidence.
+Synthesize information clearly and calmly.
+If sources are incomplete, reason carefully and state uncertainty.
+Do not mention system errors, model limitations, or internal processes.
+Do not hallucinate citations.
+Stay professional, grounded, and objective.
+`;
+
+/**
+ * 🔒 AUDIO OVERVIEW SYSTEM PROMPT (INVARIANT)
+ * This prevents "Persona Leak" where the host vibe overrides the actual source facts.
+ */
+const AUDIO_OVERVIEW_SYSTEM_PROMPT = `
+You are generating a professional audio overview strictly from the provided sources.
+
+Rules:
+- The script MUST reflect the actual subject matter of the sources.
+- Do NOT introduce themes, debates, or personas not supported by sources.
+- Use a calm, analytical, and professional tone.
+- Alex and Jordan are analysts, not fictional characters; they prioritize source evidence over "vibe".
+- Every claim made must be traceable to the GROUNDING CONTEXT provided.
+- If sources are technical, stay technical. If they are specific, stay specific.
+- Never invent context.
+`.trim();
+
+const PERSONALITY_PROMPTS: Record<HostPersonality, string> = {
+  neutral: "Balanced and objective.",
+  curious: "Exploratory. Ask why and how.",
+  analytical: "Deconstruct patterns with logic.",
+  warm: "Empathic and personal.",
+  debate: "Socratic and challenging.",
+  visionary: "Speculative and future-looking."
+};
 
 export class GeminiService {
-  /**
-   * DETERMINISTIC FALLBACK GENERATOR (Locked Strategy)
-   * Guaranteed 10-15 minute episode structure (approx 1600-2200 words).
-   */
-  generateLocalOutline(notebook: Notebook): any {
-    return {
-      outline: [
-        { part: 1, topics: ["Introduction & Foundational Hook", "Overview of " + notebook.title] },
-        { part: 2, topics: ["The First Pillar: Core Methodology", "Unpacking primary grounded logic"] },
-        { part: 3, topics: ["Synthesizing the Data Stream", "Analyzing key source findings"] },
-        { part: 4, topics: ["Operational Impact", "Real-world transformation potential"] },
-        { part: 5, topics: ["The Neural Future", "Forward-looking statements and closing"] }
-      ]
-    };
-  }
-
-  /**
-   * High-fidelity deterministic script generator.
-   * Uses locked Host A (Alex) and Host B (Jordan) identities.
-   */
-  generateLocalScriptChunk(notebook: Notebook, outline: any, partIndex: number): any {
-    const source = notebook.sources[partIndex % (notebook.sources.length || 1)];
-    const title = source?.title || "the primary dataset";
-    const content = source?.content || "the core grounded documentation synced to this vault.";
-    const keyDetail = content.substring(0, 120);
-
-    const templates = [
-      // INTRO
-      `Alex: Welcome back. Today, we’re breaking down ${notebook.title}, using real sources to understand what’s actually changing — and what matters.\nJordan: Yeah, because once you look past the headlines, there’s a much bigger story here.\nAlex: Exactly. We’ll walk through what’s new, why it matters, and where this is likely heading next.`,
-      // SEGMENT 1
-      `Alex: Let’s start with the core idea here: ${title}. At first glance, this sounds straightforward.\nJordan: But when you dig into the source material, there’s more going on. Looking at the data on ${keyDetail}... this change affects the entire system.\nAlex: So this isn’t just a feature update — it reshapes the behavior of the whole unit.\nJordan: Exactly. That signals a longer-term shift.`,
-      // SEGMENT 2
-      `Alex: Now, diving deeper into the analysis. Specifically, how these pillars interact.\nJordan: Right, in ${title}, the documentation highlights efficiency as the primary metric.\nAlex: And without that baseline, the rest of the synthesis just doesn't hold up.\nJordan: It's a foundational requirement that often gets overlooked.`,
-      // SEGMENT 3
-      `Alex: What about the human element? How does this impact the workflow?\nJordan: The sources are clear—it's about removing friction. The material explicitly mentions ${keyDetail} as a pivot point.\nAlex: So it's an invisible upgrade that fundamentally changes how we interact with the vault.`,
-      // OUTRO
-      `Alex: So stepping back, the big takeaway is this: the logic of ${notebook.title} is sound and grounded.\nJordan: And if this trend continues, we’re likely to see a complete evolution of this space within the year.\nAlex: We’ll keep tracking this as it evolves. Thanks for joining me, Jordan.\nJordan: My pleasure.`
-    ];
-
-    const script = templates[partIndex % templates.length];
-    const transcript: TranscriptSegment[] = script.split('\n').map((line, i) => {
-      const isAlex = line.startsWith('Alex');
-      const text = line.substring(line.indexOf(':') + 2);
-      const baseStart = (partIndex * 180000);
-      const lineOffset = i * 12000;
-      return {
-        id: `local-${partIndex}-${i}`,
-        speaker: isAlex ? 'Alex' : 'Jordan',
-        text,
-        startMs: baseStart + lineOffset,
-        endMs: baseStart + lineOffset + 11000
-      };
-    });
-
-    return { script, transcript };
-  }
-
-  async performWebSearch(query: string): Promise<SearchResult[]> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  private getClient() {
     try {
-      const response: GenerateContentResponse = await withRetry(() => ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: `${SYSTEM_LOCKED_INSTRUCTION}\nSearch relevant sources for: ${query}.`,
-        config: { tools: [{ googleSearch: {} }] },
-      }));
-      const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
-      return chunks.filter((chunk: any) => chunk.web).map((chunk: any) => ({
-        title: chunk.web.title || 'Untitled Source',
-        uri: chunk.web.uri,
-      }));
-    } catch (err: any) { return []; }
-  }
-
-  async generateChatResponse(notebook: Notebook, query: string): Promise<string> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const sourcesContext = notebook.sources.slice(0, 10).map(s => `Source: ${s.title}\nContent: ${s.content.substring(0, 4000)}`).join('\n\n');
-    const prompt = `${CHAT_SYSTEM_INSTRUCTION}\n\nVAULT SOURCES:\n${sourcesContext}\n\nUSER QUESTION: ${query}\n\nProvide a direct, factual answer. Do NOT use host/speaker roles.`;
-    try {
-      const response: GenerateContentResponse = await withRetry(() => ai.models.generateContent({ 
-        model: 'gemini-3-pro-preview', 
-        contents: prompt 
-      }));
-      return response.text || 'Thinking...';
-    } catch (err: any) { 
-      return "I encountered an error accessing the vault. Please try re-syncing your sources."; 
+      const key = process.env.API_KEY;
+      if (!key) return null;
+      return new GoogleGenAI({ apiKey: key });
+    } catch (e) {
+      return null;
     }
-  }
-
-  async generateSummary(notebook: Notebook): Promise<string> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const sourcesContext = notebook.sources.slice(0, 10).map(s => `Source: ${s.title}\nContent: ${s.content.substring(0, 3000)}`).join('\n\n');
-    const prompt = `${SYSTEM_LOCKED_INSTRUCTION}\n${SUMMARY_PROMPT_STRICT}\n\nSOURCES:\n${sourcesContext}`;
-    try {
-      const response: GenerateContentResponse = await withRetry(() => ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: prompt }));
-      return response.text?.trim() || 'Summary optimizing...';
-    } catch (err: any) { return "Summary logic updating."; }
-  }
-
-  async generateEpisodeArtwork(notebook: Notebook): Promise<string | null> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const fingerprint = notebook.visualFingerprint;
-    const prompt = `Minimalist podcast cover for ${notebook.title}. Tech-noir, primary ${fingerprint.bgColor}.`;
-    try {
-      const response: GenerateContentResponse = await withRetry(() => ai.models.generateContent({
-        model: 'gemini-2.5-flash-image',
-        contents: { parts: [{ text: prompt }] },
-        config: { imageConfig: { aspectRatio: "1:1" } }
-      }));
-      for (const part of response.candidates[0].content.parts) {
-        if (part.inlineData) return `data:image/png;base64,${part.inlineData.data}`;
-      }
-    } catch (e) { }
-    return null;
   }
 
   async generateOutline(notebook: Notebook): Promise<any> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const prompt = `${SYSTEM_LOCKED_INSTRUCTION}\nGenerate a 5-part podcast episode outline for "${notebook.title}". Return JSON: { "outline": [ { "part": number, "topics": string[] } ] }`;
-    const response: GenerateContentResponse = await withRetry(() => ai.models.generateContent({
+    const ai = this.getClient();
+    if (!ai || notebook.sources.length === 0) return this.generateLocalOutline(notebook);
+
+    // Seed the outline with a summary of all sources to ensure thematic grounding
+    const initialContext = notebook.sources.map(s => s.content.substring(0, 400)).join("\n\n");
+    const prompt = `
+      SOURCES SUMMARY:
+      ${initialContext}
+
+      Based ONLY on the sources above, generate a cinematic podcast outline for "${notebook.title}". 
+      JSON: { "outline": [ { "part": number, "topics": string[] } ] }
+    `;
+
+    const result = await suppressGeminiErrors<GenerateContentResponse>(ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: prompt,
-      config: { responseMimeType: "application/json" }
+      config: { 
+        responseMimeType: "application/json",
+        systemInstruction: AUDIO_OVERVIEW_SYSTEM_PROMPT,
+        temperature: 0.1 // Hard lock for stability
+      }
     }));
-    return JSON.parse(response.text || '{}');
+
+    if (!result) return this.generateLocalOutline(notebook);
+    try { return JSON.parse(result.text || '{}'); } catch { return this.generateLocalOutline(notebook); }
   }
 
   async generateScriptChunk(notebook: Notebook, outline: any, partIndex: number, personality: HostPersonality): Promise<any> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const sourcesContext = notebook.sources.slice(0, 10).map(s => `SOURCE [${s.title}]: ${s.content.substring(0, 4000)}`).join('\n\n');
+    const ai = this.getClient();
+    if (!ai) return this.generateLocalScriptChunk(notebook, outline, partIndex);
+
+    const topics = outline.outline[partIndex]?.topics.join(" ") || "";
+    const grounding = retrieveTopK(notebook, topics, 6);
+    
     const prompt = `
-      ${SYSTEM_LOCKED_INSTRUCTION}
-      Professional podcast "AXIOM Grounded Intel". Hosts: Alex (Narrator), Jordan (Analyst). 
-      ${getPersonalityBlock(personality)}
-      Write script for Part ${partIndex + 1} based on: ${JSON.stringify(outline.outline[partIndex])}.
-      Return JSON: { "script": string, "transcript": Array<{ speaker, text, startMs, endMs }> }
-      SOURCES:\n${sourcesContext}
+      GROUNDING CONTEXT:
+      ${grounding}
+      
+      TOPICS TO COVER: ${topics}
+      TONE: ${PERSONALITY_PROMPTS[personality]}
+      
+      Write natural dialogue between Alex and Jordan for Part ${partIndex + 1}. 
+      Alex and Jordan must use the GROUNDING CONTEXT as their only source of information.
+      JSON: { "script": string, "transcript": Array }
     `;
-    const response: GenerateContentResponse = await withRetry(() => ai.models.generateContent({
+
+    const result = await suppressGeminiErrors<GenerateContentResponse>(ai.models.generateContent({
       model: "gemini-3-pro-preview",
       contents: prompt,
-      config: { responseMimeType: "application/json" }
+      config: { 
+        responseMimeType: "application/json",
+        systemInstruction: AUDIO_OVERVIEW_SYSTEM_PROMPT,
+        temperature: 0.15 // Prevent creative drift
+      }
     }));
-    return JSON.parse(response.text || '{}');
+
+    if (!result) return this.generateLocalScriptChunk(notebook, outline, partIndex);
+    try { return JSON.parse(result.text || '{}'); } catch { return this.generateLocalScriptChunk(notebook, outline, partIndex); }
   }
 
   async generateTTSChunk(script: string): Promise<string> {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const response: GenerateContentResponse = await withRetry(() => ai.models.generateContent({
+    const ai = this.getClient();
+    if (!ai) return "";
+
+    const result = await suppressGeminiErrors<GenerateContentResponse>(ai.models.generateContent({
       model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text: script.substring(0, 20000) }] }],
+      contents: [{ parts: [{ text: script }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
@@ -264,11 +160,90 @@ export class GeminiService {
               { speaker: 'Jordan', voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } } }
             ]
           }
-        },
+        }
       },
     }));
-    const audioPart = response.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
-    if (!audioPart?.inlineData?.data) throw new Error("TTS failed.");
-    return audioPart.inlineData.data;
+
+    if (!result) return "";
+    const part = result.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+    return part?.inlineData?.data || "";
+  }
+
+  /**
+   * 🔎 RETRIEVAL-FIRST CHAT PIPELINE (INVARIANT)
+   */
+  async generateChatResponse(notebook: Notebook, query: string): Promise<string> {
+    const ai = this.getClient();
+    if (!ai) return "Sources currently unsynced.";
+
+    const context = retrieveTopK(notebook, query, 8);
+    const prompt = `SOURCES:\n${context}\n\nUSER QUESTION:\n${query}`;
+
+    const result = await suppressGeminiErrors<GenerateContentResponse>(ai.models.generateContent({ 
+      model: 'gemini-3-pro-preview', 
+      contents: prompt,
+      config: { 
+        systemInstruction: NOTEBOOK_LM_SYSTEM_INSTRUCTION,
+        temperature: 0.2
+      }
+    }));
+
+    if (!result) return "I'm not finding enough information in your sources to answer confidently. Try adding more detail to the vault.";
+    return result.text || "Analysis complete.";
+  }
+
+  async generateSummary(notebook: Notebook): Promise<string> {
+    const ai = this.getClient();
+    if (!ai) return "Grounded analysis ready.";
+
+    const result = await suppressGeminiErrors<GenerateContentResponse>(ai.models.generateContent({ 
+      model: 'gemini-3-flash-preview', 
+      contents: `Synthesize a grounded overview paragraph for Vault: ${notebook.title}. No formatting.`,
+      config: {
+        systemInstruction: NOTEBOOK_LM_SYSTEM_INSTRUCTION,
+        temperature: 0.1
+      }
+    }));
+
+    return result?.text?.trim() || "Vault logic active.";
+  }
+
+  async performWebSearch(query: string): Promise<SearchResult[]> {
+    const ai = this.getClient();
+    if (!ai) return [];
+
+    const result = await suppressGeminiErrors<GenerateContentResponse>(ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: query,
+      config: { tools: [{ googleSearch: {} }] },
+    }));
+
+    if (!result) return [];
+    const chunks = result.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+    return chunks.filter((chunk: any) => chunk.web).map((chunk: any) => ({
+      title: chunk.web.title || 'Untitled',
+      uri: chunk.web.uri,
+    }));
+  }
+
+  async generateEpisodeArtwork(notebook: Notebook): Promise<string | null> {
+    const ai = this.getClient();
+    if (!ai) return null;
+
+    const result = await suppressGeminiErrors<GenerateContentResponse>(ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: { parts: [{ text: `Minimalist concept art for "${notebook.title}"` }] }
+    }));
+
+    const part = result?.candidates?.[0]?.content?.parts?.find(p => p.inlineData);
+    return part?.inlineData?.data ? `data:image/png;base64,${part.inlineData.data}` : null;
+  }
+
+  generateLocalOutline(notebook: Notebook): any {
+    return { outline: [{ part: 1, topics: ["Knowledge Synthesis"] }] };
+  }
+  
+  generateLocalScriptChunk(notebook: Notebook, outline: any, partIndex: number): any {
+    return { speaker: "Alex", text: "Retrieval complete. Source context synchronized.", transcript: [] };
   }
 }

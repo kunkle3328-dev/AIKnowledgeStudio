@@ -22,7 +22,8 @@ export const MOCK_NOTEBOOKS: Notebook[] = [
       bgColorAlt: '#1E293B',
       accent: '#38BDF8',
       assignedAt: 1768867200000
-    }
+    },
+    isShared: true // Marked as shared
   },
   {
     id: '2',
@@ -37,7 +38,8 @@ export const MOCK_NOTEBOOKS: Notebook[] = [
       bgColorAlt: '#581C87',
       accent: '#D8B4FE',
       assignedAt: 1768780800000
-    }
+    },
+    isShared: false
   },
   {
     id: '3',
@@ -52,6 +54,7 @@ export const MOCK_NOTEBOOKS: Notebook[] = [
       bgColorAlt: '#065F46',
       accent: '#6EE7B7',
       assignedAt: 1768694400000
-    }
+    },
+    isShared: false
   }
 ];

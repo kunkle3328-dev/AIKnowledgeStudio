@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Notebook, NotebookIcon } from '../types';
 import { createVisualFingerprint } from '../services/classifyNotebook';
 import AxiomLogo from './AxiomLogo';
@@ -10,6 +10,8 @@ interface NotebookListProps {
   onAddNotebook: (notebook: Notebook) => void;
   onJumpToStudio: (notebook: Notebook) => void;
 }
+
+type ListFilter = 'ALL' | 'INTELLIGENCE' | 'SHARED';
 
 const NotebookIconRenderer: React.FC<{ icon: NotebookIcon; color: string }> = ({ icon, color }) => {
   const props = {
@@ -33,6 +35,21 @@ const NotebookIconRenderer: React.FC<{ icon: NotebookIcon; color: string }> = ({
 const NotebookList: React.FC<NotebookListProps> = ({ notebooks, onSelect, onAddNotebook, onJumpToStudio }) => {
   const [showAddModal, setShowAddModal] = useState(false);
   const [newTitle, setNewTitle] = useState('');
+  const [activeFilter, setActiveFilter] = useState<ListFilter>('ALL');
+
+  const filteredNotebooks = useMemo(() => {
+    switch (activeFilter) {
+      case 'INTELLIGENCE':
+        // Show notebooks that are categorized in 'core' intelligence fields
+        return notebooks.filter(n => ['technology', 'science', 'research', 'brain'].includes(n.visualFingerprint.category));
+      case 'SHARED':
+        // Show shared notebooks
+        return notebooks.filter(n => n.isShared);
+      case 'ALL':
+      default:
+        return notebooks;
+    }
+  }, [notebooks, activeFilter]);
 
   const handleCreate = () => {
     if (!newTitle.trim()) return;
@@ -46,9 +63,16 @@ const NotebookList: React.FC<NotebookListProps> = ({ notebooks, onSelect, onAddN
       summary: '',
       isGeneratingSummary: false,
       visualFingerprint: fingerprint,
-      generatedMedia: []
+      generatedMedia: [],
+      isShared: false
     });
     setNewTitle(''); setShowAddModal(false);
+  };
+
+  const getEmptyStateMessage = () => {
+    if (activeFilter === 'INTELLIGENCE') return "No intelligence-heavy vaults identified.";
+    if (activeFilter === 'SHARED') return "No vaults shared with your unit.";
+    return "Vault is currently empty.";
   };
 
   return (
@@ -68,41 +92,65 @@ const NotebookList: React.FC<NotebookListProps> = ({ notebooks, onSelect, onAddN
 
       <div className="px-6 mb-6 shrink-0">
         <div className="flex gap-6 text-[10px] font-black uppercase tracking-[0.15em] text-zinc-500 border-b border-white/5">
-          <button className="text-white border-b-2 border-[#4DA3FF] pb-3 transition-all">All Vaults</button>
-          <button className="pb-3 hover:text-white transition-colors">Intelligence</button>
-          <button className="pb-3 hover:text-white transition-colors">Shared</button>
+          <button 
+            onClick={() => setActiveFilter('ALL')}
+            className={`pb-3 transition-all ${activeFilter === 'ALL' ? 'text-white border-b-2 border-[#4DA3FF]' : 'hover:text-white'}`}
+          >
+            All Vaults
+          </button>
+          <button 
+            onClick={() => setActiveFilter('INTELLIGENCE')}
+            className={`pb-3 transition-all ${activeFilter === 'INTELLIGENCE' ? 'text-white border-b-2 border-[#4DA3FF]' : 'hover:text-white'}`}
+          >
+            Intelligence
+          </button>
+          <button 
+            onClick={() => setActiveFilter('SHARED')}
+            className={`pb-3 transition-all ${activeFilter === 'SHARED' ? 'text-white border-b-2 border-[#4DA3FF]' : 'hover:text-white'}`}
+          >
+            Shared
+          </button>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto no-scrollbar px-6 flex flex-col gap-4 pb-48">
-        {notebooks.map(notebook => {
-          const fingerprint = notebook.visualFingerprint;
-          return (
-            <div 
-              key={notebook.id} onClick={() => onSelect(notebook)}
-              style={{ background: `linear-gradient(135deg, ${fingerprint.bgColor}99, ${fingerprint.bgColorAlt}66), #0B0D10` }}
-              className="w-full p-5 rounded-[28px] flex items-center justify-between group active:scale-[0.98] transition-all border border-white/5 shadow-[0_8px_20px_rgba(0,0,0,0.4)] shrink-0 animate-in fade-in slide-in-from-bottom-2 duration-500"
-            >
-              <div className="flex items-center gap-4 overflow-hidden">
-                <div className="w-12 h-12 bg-black/40 backdrop-blur-md rounded-2xl shrink-0 flex items-center justify-center border border-white/5">
-                  <NotebookIconRenderer icon={fingerprint.icon} color={fingerprint.accent} />
-                </div>
-                <div className="overflow-hidden">
-                  <h3 className="text-base font-bold text-white leading-tight truncate font-tech">{notebook.title}</h3>
-                  <div className="text-zinc-400 text-[9px] mt-1 font-black uppercase tracking-widest opacity-60">
-                    {notebook.sources.length} units • {new Date(notebook.createdAt).toLocaleDateString()}
+        {filteredNotebooks.length > 0 ? (
+          filteredNotebooks.map(notebook => {
+            const fingerprint = notebook.visualFingerprint;
+            return (
+              <div 
+                key={notebook.id} onClick={() => onSelect(notebook)}
+                style={{ background: `linear-gradient(135deg, ${fingerprint.bgColor}99, ${fingerprint.bgColorAlt}66), #0B0D10` }}
+                className="w-full p-5 rounded-[28px] flex items-center justify-between group active:scale-[0.98] transition-all border border-white/5 shadow-[0_8px_20px_rgba(0,0,0,0.4)] shrink-0 animate-in fade-in slide-in-from-bottom-2 duration-500"
+              >
+                <div className="flex items-center gap-4 overflow-hidden">
+                  <div className="w-12 h-12 bg-black/40 backdrop-blur-md rounded-2xl shrink-0 flex items-center justify-center border border-white/5">
+                    <NotebookIconRenderer icon={fingerprint.icon} color={fingerprint.accent} />
+                  </div>
+                  <div className="overflow-hidden">
+                    <h3 className="text-base font-bold text-white leading-tight truncate font-tech">{notebook.title}</h3>
+                    <div className="text-zinc-400 text-[9px] mt-1 font-black uppercase tracking-widest opacity-60">
+                      {notebook.sources.length} units • {new Date(notebook.createdAt).toLocaleDateString()}
+                    </div>
                   </div>
                 </div>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); onJumpToStudio(notebook); }}
+                  className="w-10 h-10 shrink-0 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white active:bg-white active:text-black transition-all group-hover:bg-[#4DA3FF] group-hover:border-[#4DA3FF]"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+                </button>
               </div>
-              <button 
-                onClick={(e) => { e.stopPropagation(); onJumpToStudio(notebook); }}
-                className="w-10 h-10 shrink-0 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white active:bg-white active:text-black transition-all group-hover:bg-[#4DA3FF] group-hover:border-[#4DA3FF]"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 4 20 12 6 20 6 4"/></svg>
-              </button>
-            </div>
-          );
-        })}
+            );
+          })
+        ) : (
+          <div className="flex flex-col items-center justify-center py-20 text-center opacity-30 animate-in fade-in duration-500">
+             <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mb-4">
+               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"/></svg>
+             </div>
+             <p className="text-[10px] font-tech font-bold uppercase tracking-widest">{getEmptyStateMessage()}</p>
+          </div>
+        )}
         
         <div className="mt-2 flex flex-col gap-4">
            <button 

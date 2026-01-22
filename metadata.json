@@ -1,7 +1,5 @@
 {
   "name": "AXIOM",
   "description": "Grounded Intelligence Studio. Transform raw sources into cinematic audio overviews and interactive knowledge networks.",
-  "requestFramePermissions": [
-    "microphone"
-  ]
+  "requestFramePermissions": []
 }

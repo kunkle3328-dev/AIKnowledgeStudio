@@ -4,6 +4,7 @@ export interface Source {
   type: 'text' | 'url' | 'pdf';
   title: string;
   content: string;
+  indexed?: boolean;
 }
 
 export interface TranscriptSegment {
@@ -32,7 +33,7 @@ export interface GeneratedMedia {
   artworkUrl?: string;
   transcript?: TranscriptSegment[];
   chapters?: AudioChapter[];
-  audioBase64?: string; // Optional: store the audio if we want to replay it
+  audioBase64?: string;
 }
 
 export type HostPersonality = 'neutral' | 'curious' | 'analytical' | 'warm' | 'debate' | 'visionary';
@@ -45,14 +46,21 @@ export type PodcastJobState =
   | 'SYNTHESIZING' 
   | 'FINALIZING' 
   | 'READY' 
-  | 'FAILED' 
-  | 'QUOTA_PAUSED' 
-  | 'QUOTA_BLOCKED'
-  | 'OPTIMIZING';
+  | 'FAILED'
+  | 'INDEXING';
 
 export type GenerationMode = 'PRIMARY' | 'OPTIMIZED' | 'FAILSAFE';
 
-export type ResponseMode = 'CHAT_ANSWER' | 'AUDIO_OVERVIEW' | 'SCRIPT_ONLY';
+/**
+ * 🎛 Waveform Mode (System Presence)
+ * Invariant: Always mounted, indicates system activity.
+ */
+export type WaveformMode = 'idle' | 'thinking' | 'speaking';
+
+export enum TTSEngine {
+  GEMINI = 'GEMINI',
+  SILENCE = 'SILENCE'
+}
 
 export interface PodcastJob {
   jobId: string;
@@ -60,6 +68,7 @@ export interface PodcastJob {
   state: PodcastJobState;
   progress: number;
   mode: GenerationMode;
+  activeEngine: TTSEngine | null;
   audio?: {
     audio: string;
     chapters: AudioChapter[];
@@ -71,7 +80,7 @@ export interface PodcastJob {
   personality: HostPersonality;
   completedChunks: number;
   totalChunks: number;
-  partialAudioBuffers?: string[]; // Base64 chunks for resume
+  partialAudioBuffers?: string[];
   partialTranscript?: TranscriptSegment[];
 }
 
@@ -129,6 +138,7 @@ export interface Notebook {
   generatedMedia?: GeneratedMedia[];
   isGeneratingSummary?: boolean; 
   visualFingerprint: NotebookVisualFingerprint;
+  isShared?: boolean;
 }
 
 export enum Tab {
